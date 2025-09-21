@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "generatedAt": "2025-09-21T12:36:14.362388Z",
+  "total": 1,
+  "chunkSize": 50000,
+  "chunks": [
+    "chunk-000.json"
+  ]
+}
