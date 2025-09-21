@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>The Met — Simple Collection Browser</title>
+<meta name="description" content="Search The Metropolitan Museum of Art Collection API with filters" />
+<style>
+  :root { --c:#111; --m:#666; --bg:#fafafa; --card:#fff; --b:#e6e6e6; }
+  *{box-sizing:border-box} body{margin:0;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--c)}
+  header{padding:16px 20px;background:#fff;border-bottom:1px solid var(--b);position:sticky;top:0;z-index:10}
+  h1{margin:0 0 6px;font-size:18px}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+  .field{display:flex;flex-direction:column;min-width:160px}
+  .field label{font-size:11px;color:var(--m)}
+  .field input,.field select{padding:6px 8px;border:1px solid var(--b);border-radius:6px;background:#fff}
+  .tog{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .tog label{font-size:13px;color:var(--c)}
+  .btn{padding:8px 12px;border:1px solid var(--b);border-radius:6px;background:#fff;cursor:pointer}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+  main{max-width:1100px;margin:20px auto;padding:0 16px}
+  .stats{margin:8px 0 14px;color:var(--m);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .card{background:var(--card);border:1px solid var(--b);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+  .thumb{aspect-ratio:4/3;background:#f0f0f0;display:grid;place-items:center}
+  .thumb img{width:100%;height:100%;object-fit:cover}
+  .pad{padding:10px}
+  .title{font-weight:600;margin:2px 0 4px}
+  .meta{font-size:12px;color:var(--m)}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .badge{font-size:11px;padding:2px 6px;border-radius:999px;background:#f4f4f4;border:1px solid var(--b)}
+  .actions{display:flex;gap:10px;padding:0 10px 10px}
+  .pagination{display:flex;gap:8px;justify-content:center;margin:18px 0}
+  .notice{padding:12px;border:1px dashed var(--b);background:#fff;border-radius:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>The Met — Simple Collection Browser</h1>
+  <div class="row">
+    <div class="field" style="flex:1 1 280px;min-width:240px">
+      <label>Search (q)</label>
+      <input id="q" placeholder="e.g., sunflower, Rembrandt, bronze" />
+    </div>
+    <div class="field">
+      <label>Department</label>
+      <select id="department"><option value="">All departments</option></select>
+    </div>
+    <div class="field">
+      <label>Medium (use | for multiple)</label>
+      <input id="medium" placeholder="Oil|Canvas|Bronze" />
+    </div>
+    <div class="field">
+      <label>Geo Location (use | for multiple)</label>
+      <input id="geo" placeholder="France|Egypt|Japan" />
+    </div>
+    <div class="field">
+      <label>Date Begin (year)</label>
+      <input id="dateBegin" type="number" inputmode="numeric" placeholder="1200" />
+    </div>
+    <div class="field">
+      <label>Date End (year)</label>
+      <input id="dateEnd" type="number" inputmode="numeric" placeholder="1890" />
+    </div>
+    <button class="btn" id="searchBtn" title="Search full collection via Met API">Search</button>
+    <button class="btn" id="resetBtn">Reset</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div class="tog">
+      <label><input type="checkbox" id="hasImages" checked /> Has Images</label>
+      <label><input type="checkbox" id="onView" /> On View</label>
+      <label><input type="checkbox" id="highlights" /> Highlights</label>
+      <label><input type="checkbox" id="artistOrCulture" /> Artist or Culture</label>
+      <label><input type="checkbox" id="titleOnly" /> Title Only</label>
+    </div>
+    <div style="margin-left:auto" class="tog">
+      <label>Page size:
+        <select id="pageSize">
+          <option>24</option><option>48</option><option>96</option>
+        </select>
+      </label>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="stats" id="stats">Enter a search and adjust filters to begin.</div>
+  <div id="notice" class="notice" style="display:none"></div>
+  <section class="grid" id="grid"></section>
+  <div class="pagination" id="pager" style="display:none">
+    <button class="btn" id="prevBtn">◀ Prev</button>
+    <button class="btn" id="nextBtn">Next ▶</button>
+  </div>
+</main>
+
+<script>
+const API = "https://collectionapi.metmuseum.org/public/collection/v1";
+const els = {
+  q:           document.getElementById('q'),
+  department:  document.getElementById('department'),
+  medium:      document.getElementById('medium'),
+  geo:         document.getElementById('geo'),
+  dateBegin:   document.getElementById('dateBegin'),
+  dateEnd:     document.getElementById('dateEnd'),
+  hasImages:   document.getElementById('hasImages'),
+  onView:      document.getElementById('onView'),
+  highlights:  document.getElementById('highlights'),
+  artistOrCulture: document.getElementById('artistOrCulture'),
+  titleOnly:   document.getElementById('titleOnly'),
+  pageSize:    document.getElementById('pageSize'),
+  searchBtn:   document.getElementById('searchBtn'),
+  resetBtn:    document.getElementById('resetBtn'),
+  stats:       document.getElementById('stats'),
+  grid:        document.getElementById('grid'),
+  pager:       document.getElementById('pager'),
+  prevBtn:     document.getElementById('prevBtn'),
+  nextBtn:     document.getElementById('nextBtn'),
+  notice:      document.getElementById('notice'),
+};
+
+let state = { ids: [], total: 0, page: 0 };
+
+function paramsFromUI() {
+  const p = new URLSearchParams();
+  const q = els.q.value.trim();
+  // Per official docs, `q` is required for search. If empty, we gently fallback to "art"
+  // so users can still browse, then let filters narrow. (Docs: q is the search term.) 
+  // You can change this to any broad term your wife prefers.
+  p.set("q", q || "art");
+  if (els.department.value) p.set("departmentId", els.department.value);
+  if (els.onView.checked)   p.set("isOnView", "true");
+  if (els.hasImages.checked) p.set("hasImages", "true");
+  if (els.highlights.checked) p.set("isHighlight", "true");
+  if (els.artistOrCulture.checked) p.set("artistOrCulture", "true");
+  if (els.titleOnly.checked) p.set("title", "true");
+  if (els.medium.value.trim()) p.set("medium", els.medium.value.trim());
+  if (els.geo.value.trim())    p.set("geoLocation", els.geo.value.trim());
+  if (els.dateBegin.value)     p.set("dateBegin", els.dateBegin.value);
+  if (els.dateEnd.value)       p.set("dateEnd", els.dateEnd.value);
+  return p;
+}
+
+async function loadDepartments() {
+  try {
+    const r = await fetch(API + "/departments");
+    const data = await r.json();
+    (data.departments || []).forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.departmentId; opt.textContent = d.displayName;
+      els.department.append(opt);
+    });
+  } catch (e) {
+    console.warn("Failed loading departments", e);
+  }
+}
+
+async function search() {
+  state.page = 0;
+  const searchURL = API + "/search?" + paramsFromUI().toString();
+  els.notice.style.display = "none";
+  els.stats.textContent = "Searching…";
+  els.grid.innerHTML = "";
+  try {
+    const r = await fetch(searchURL);
+    if (!r.ok) throw new Error(r.status + " " + r.statusText);
+    const data = await r.json();
+    state.ids = data.objectIDs || [];
+    state.total = data.total || 0;
+    if (!state.total) {
+      els.stats.textContent = "No results. Try broadening your search.";
+      els.pager.style.display = "none";
+      return;
+    }
+    els.stats.textContent = `${state.total.toLocaleString()} results — showing page 1`;
+    renderPage();
+  } catch (e) {
+    els.stats.textContent = "Search failed.";
+    els.notice.style.display = "block";
+    els.notice.textContent = "The Met API requires a search term (q). Enter a broad word (e.g., 'art', 'painting') then refine with filters.";
+  }
+}
+
+function currentSlice() {
+  const size = Number(els.pageSize.value);
+  const start = state.page * size;
+  return state.ids.slice(start, start + size);
+}
+
+async function renderPage() {
+  const ids = currentSlice();
+  const size = Number(els.pageSize.value);
+  els.grid.innerHTML = "";
+  if (!ids.length) { els.grid.innerHTML = "<div class='notice'>No items on this page.</div>"; return; }
+
+  // Fetch object details in parallel (polite concurrency)
+  const results = [];
+  const concurrency = 8;
+  let i = 0;
+  await Promise.all(new Array(concurrency).fill(0).map(async () => {
+    while (i < ids.length) {
+      const idx = i++; const id = ids[idx];
+      try {
+        const r = await fetch(API + "/objects/" + id);
+        if (r.ok) results[idx] = await r.json();
+      } catch {}
+    }
+  }));
+
+  for (const o of results.filter(Boolean)) {
+    const card = document.createElement('article');
+    card.className = "card";
+    const hasThumb = o.primaryImageSmall || o.primaryImage;
+    card.innerHTML = `
+      <div class="thumb">${hasThumb ? `<img loading="lazy" src="${o.primaryImageSmall || o.primaryImage}" alt="${(o.title||"").replace(/"/g,'&quot;')}" />` : "No image"}</div>
+      <div class="pad">
+        <div class="title">${o.title || "Untitled"}</div>
+        <div class="meta">${o.artistDisplayName || o.culture || (o.department||"")}</div>
+        <div class="meta">${o.objectDate || ""}</div>
+        <div class="badges">
+          ${o.isPublicDomain ? `<span class="badge">Open Access</span>`:""}
+          ${o.isOnView ? `<span class="badge">On View</span>`:""}
+          ${o.department ? `<span class="badge">${o.department}</span>`:""}
+        </div>
+      </div>
+      <div class="actions">
+        ${o.objectURL ? `<a class="btn" target="_blank" rel="noreferrer" href="${o.objectURL}">Object Page</a>`:""}
+        ${o.primaryImage ? `<a class="btn" target="_blank" rel="noreferrer" href="${o.primaryImage}">Full Image</a>`:""}
+      </div>`;
+    els.grid.append(card);
+  }
+
+  const totalPages = Math.ceil(state.total / size);
+  els.pager.style.display = totalPages > 1 ? "flex" : "none";
+  els.prevBtn.disabled = state.page === 0;
+  els.nextBtn.disabled = state.page >= totalPages - 1;
+  els.stats.textContent = `${state.total.toLocaleString()} results — page ${state.page+1} of ${totalPages}`;
+}
+
+els.prevBtn.addEventListener('click', () => { if (state.page>0){ state.page--; renderPage(); }});
+els.nextBtn.addEventListener('click', () => { const size=Number(els.pageSize.value); if ((state.page+1)*size < state.total){ state.page++; renderPage(); }});
+els.pageSize.addEventListener('change', () => { state.page = 0; renderPage(); });
+
+els.searchBtn.addEventListener('click', search);
+els.resetBtn.addEventListener('click', () => {
+  for (const id of ["q","medium","geo","dateBegin","dateEnd"]) els[id].value = "";
+  els.department.value = "";
+  els.hasImages.checked = true; els.onView.checked = false; els.highlights.checked = false;
+  els.artistOrCulture.checked = false; els.titleOnly.checked = false;
+  state = { ids:[], total:0, page:0 }; els.grid.innerHTML = ""; els.stats.textContent = "Enter a search and adjust filters to begin.";
+});
+
+loadDepartments();
+</script>
+<footer style="text-align:center;color:#777;font-size:12px;margin:20px 0 40px">
+  Images & data © The Met Open Access (CC0). This tool queries the official Collection API.
+</footer>
+</body>
+</html>
